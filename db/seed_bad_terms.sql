@@ -1,0 +1,35 @@
+-- Safe, university-friendly "bad words/phrases" used by the filter (lowercase!)
+-- You can extend/trim the list later; multi-word phrases are preserved.
+INSERT INTO bad_terms(pattern, is_regex, enabled) VALUES
+('spoiler', false, true),
+('leak', false, true),
+('nsfw', false, true),
+('fake news', false, true),
+('clickbait', false, true),
+('phishing', false, true),
+('malware', false, true),
+('copyright', false, true),
+('plagiarism', false, true),
+('hate speech', false, true),
+('scam', false, true),
+('spam', false, true),
+('adult content', false, true),
+('restricted', false, true),
+('violent content', false, true),
+('illegal download', false, true),
+('torrent', false, true),
+('pirated', false, true),
+('deepfake', false, true),
+('misinfo', false, true),
+('disinformation', false, true),
+('botnet', false, true),
+('ransomware', false, true),
+('doxxing', false, true),
+('harassment', false, true),
+('self harm', false, true),
+('graphic', false, true),
+('sensitive content', false, true),
+('policy violation', false, true),
+('unsafe', false, true)
+ON CONFLICT DO NOTHING;
+

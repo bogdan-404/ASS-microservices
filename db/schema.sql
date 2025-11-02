@@ -1,0 +1,32 @@
+CREATE TABLE IF NOT EXISTS texts (
+  id BIGSERIAL PRIMARY KEY,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS results (
+  id BIGSERIAL PRIMARY KEY,
+  text_id BIGINT NOT NULL REFERENCES texts(id) ON DELETE CASCADE,
+  word_count INT NOT NULL,
+  has_words BOOLEAN NOT NULL,
+  score INT NOT NULL,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS bad_terms (
+  id BIGSERIAL PRIMARY KEY,
+  pattern TEXT NOT NULL,
+  is_regex BOOLEAN NOT NULL DEFAULT FALSE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE INDEX IF NOT EXISTS ix_bad_terms_enabled ON bad_terms(enabled);
+
+DROP MATERIALIZED VIEW IF EXISTS results_stats;
+CREATE MATERIALIZED VIEW results_stats AS
+SELECT
+  COUNT(*)::BIGINT AS total_processed,
+  AVG(score)::NUMERIC(10,2) AS avg_score,
+  AVG(CASE WHEN has_words THEN 1 ELSE 0 END)::NUMERIC(5,4) AS bad_words_rate
+FROM results;
+

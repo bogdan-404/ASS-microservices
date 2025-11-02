@@ -1,0 +1,22 @@
+server:
+  port: 8080
+spring:
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:db}:${POSTGRES_PORT:5432}/${POSTGRES_DB:tp_micro}
+    username: ${POSTGRES_USER:tp_user}
+    password: ${POSTGRES_PASSWORD:tp_pass}
+  jpa:
+    hibernate:
+      ddl-auto: none
+  rabbitmq:
+    host: ${RABBIT_HOST:rabbit}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASS:guest}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+
