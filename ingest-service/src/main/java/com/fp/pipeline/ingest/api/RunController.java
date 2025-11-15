@@ -98,11 +98,14 @@ public class RunController {
       rabbit.convertAndSend("", "incoming_texts", msg);
     }
     
-    // Block until all items are processed
+    // Block until all items are processed (with timeout)
     int processed = 0;
-    while (processed < count) {
+    int maxWaitSeconds = 300; // 5 minute timeout
+    int waitedSeconds = 0;
+    while (processed < count && waitedSeconds < maxWaitSeconds) {
       try {
         Thread.sleep(200);
+        waitedSeconds += 1; // Approximate, but close enough
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         break;
@@ -113,6 +116,18 @@ public class RunController {
         runId
       );
       processed = cnt != null ? cnt : 0;
+    }
+    
+    if (processed < count) {
+      // Timeout reached
+      return Map.of(
+        "error", "Timeout waiting for processing",
+        "runId", runId,
+        "requestedCount", count,
+        "enqueued", count,
+        "processed", processed,
+        "message", "Not all items were processed within timeout period"
+      );
     }
     
     long durationMs = System.currentTimeMillis() - startTime;

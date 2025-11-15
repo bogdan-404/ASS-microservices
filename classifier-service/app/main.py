@@ -52,18 +52,50 @@ def filter_and_collect_ids(content: str, terms: list) -> tuple:
     return out, removed_ids
 
 def consumer():
+    # Wait for RabbitMQ to be ready
+    max_retries = 30
+    retry_delay = 2
+    connection = None
+    
+    for attempt in range(max_retries):
+        try:
+            credentials = pika.PlainCredentials(RABBIT["user"], RABBIT["pwd"])
+            params = pika.ConnectionParameters(
+                RABBIT["host"], 
+                RABBIT["port"], 
+                "/", 
+                credentials,
+                connection_attempts=1,
+                retry_delay=1,
+                socket_timeout=5
+            )
+            connection = pika.BlockingConnection(params)
+            print(f"Successfully connected to RabbitMQ on attempt {attempt + 1}")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Waiting for RabbitMQ... (attempt {attempt + 1}/{max_retries}): {e}")
+                time.sleep(retry_delay)
+            else:
+                print(f"Failed to connect to RabbitMQ after {max_retries} attempts: {e}")
+                return
+    
+    if connection is None:
+        print("No connection to RabbitMQ, consumer exiting")
+        return
+    
+    # Connect to database
     conn = psycopg2.connect(host=DB["host"], port=DB["port"], dbname=DB["db"],
                             user=DB["user"], password=DB["pwd"])
     global bad_terms
     bad_terms = load_bad_terms(conn)
 
-    credentials = pika.PlainCredentials(RABBIT["user"], RABBIT["pwd"])
-    params = pika.ConnectionParameters(RABBIT["host"], RABBIT["port"], "/", credentials)
-    channel = pika.BlockingConnection(params).channel()
+    channel = connection.channel()
     channel.queue_declare(queue=RABBIT["queue"], durable=True)
     channel.basic_qos(prefetch_count=RABBIT["prefetch"])
 
     def handle(ch, method, props, body):
+        nonlocal conn
         try:
             msg = json.loads(body)
             run_id = msg.get("runId")
@@ -76,6 +108,18 @@ def consumer():
             filtered_content, removed_ids = filter_and_collect_ids(content, bad_terms)
             removed_ids_str = "{" + ",".join(str(i) for i in removed_ids) + "}"
 
+            # Ensure connection is still alive
+            try:
+                with conn.cursor() as test_c:
+                    test_c.execute("SELECT 1")
+            except:
+                try:
+                    conn.close()
+                except:
+                    pass
+                conn = psycopg2.connect(host=DB["host"], port=DB["port"], dbname=DB["db"],
+                                        user=DB["user"], password=DB["pwd"])
+
             with conn.cursor() as c:
                 if run_id is not None:
                     c.execute("INSERT INTO results(text_id, run_id, word_count, has_words, score) VALUES(%s,%s,%s,%s,%s)",
@@ -87,15 +131,33 @@ def consumer():
                               (text_id, wc, hw, score))
                 c.execute("UPDATE texts SET status='DONE' WHERE id=%s", (text_id,))
             conn.commit()
+            
+            print(f"Processed text_id={text_id}, run_id={run_id}, score={score}")
 
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
-            conn.rollback()
+            import traceback
+            print(f"ERROR processing message: {e}")
+            print(traceback.format_exc())
+            try:
+                conn.rollback()
+            except:
+                pass
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-    channel.basic_consume(queue=RABBIT["queue"], on_message_callback=handle)
-    channel.start_consuming()
+    try:
+        channel.basic_consume(queue=RABBIT["queue"], on_message_callback=handle)
+        print(f"Classifier consumer started, listening on queue: {RABBIT['queue']}")
+        channel.start_consuming()
+    except Exception as e:
+        print(f"Error in consumer: {e}")
+    finally:
+        if connection and not connection.is_closed:
+            connection.close()
+        if conn:
+            conn.close()
 
+# Start consumer in background thread (one per container instance)
 threading.Thread(target=consumer, daemon=True).start()
 
 @app.get("/health")
