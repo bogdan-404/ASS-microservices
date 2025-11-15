@@ -64,7 +64,6 @@ def consumer():
     channel.basic_qos(prefetch_count=RABBIT["prefetch"])
 
     def handle(ch, method, props, body):
-        start = time.time()
         try:
             msg = json.loads(body)
             run_id = msg.get("runId")
@@ -98,4 +97,9 @@ def consumer():
     channel.start_consuming()
 
 threading.Thread(target=consumer, daemon=True).start()
+
+@app.get("/health")
+def health():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "classifier"}
 

@@ -37,7 +37,6 @@ services:
       RABBIT_QUEUE: incoming_texts
       RABBIT_PREFETCH: 50
     depends_on: [db, rabbit]
-    ports: ["8082:8082"]
 
   stats:
     build: ./stats-service
