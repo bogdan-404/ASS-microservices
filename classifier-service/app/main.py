@@ -1,11 +1,7 @@
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
 import os, json, time, threading, psycopg2, pika, re
-from prometheus_client import Counter, Histogram, generate_latest
 
 app = FastAPI()
-PROC_COUNT = Counter("classifier_processed_total", "Processed messages")
-PROC_LAT = Histogram("classifier_item_duration_seconds", "Per-item processing time")
 
 DB = dict(
   host=os.getenv("POSTGRES_HOST","db"),
@@ -93,8 +89,6 @@ def consumer():
                 c.execute("UPDATE texts SET status='DONE' WHERE id=%s", (text_id,))
             conn.commit()
 
-            PROC_COUNT.inc()
-            PROC_LAT.observe(time.time() - start)
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
             conn.rollback()
@@ -104,8 +98,4 @@ def consumer():
     channel.start_consuming()
 
 threading.Thread(target=consumer, daemon=True).start()
-
-@app.get("/metrics")
-def metrics():
-    return PlainTextResponse(generate_latest().decode("utf-8"))
 
