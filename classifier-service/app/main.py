@@ -108,31 +108,37 @@ def consumer():
             filtered_content, removed_ids = filter_and_collect_ids(content, bad_terms)
             removed_ids_str = "{" + ",".join(str(i) for i in removed_ids) + "}"
 
-            # Ensure connection is still alive
+            # Use connection directly - psycopg2 handles reconnection automatically
             try:
-                with conn.cursor() as test_c:
-                    test_c.execute("SELECT 1")
-            except:
+                with conn.cursor() as c:
+                    if run_id is not None:
+                        c.execute("INSERT INTO results(text_id, run_id, word_count, has_words, score) VALUES(%s,%s,%s,%s,%s)",
+                                  (text_id, run_id, wc, hw, score))
+                        c.execute("INSERT INTO filtered_strings(text_id, run_id, filtered_content, removed_bad_term_ids) VALUES(%s,%s,%s,%s)",
+                                  (text_id, run_id, filtered_content, removed_ids_str))
+                    else:
+                        c.execute("INSERT INTO results(text_id, word_count, has_words, score) VALUES(%s,%s,%s,%s)",
+                                  (text_id, wc, hw, score))
+                conn.commit()
+            except psycopg2.OperationalError:
+                # Connection lost, reconnect
                 try:
                     conn.close()
                 except:
                     pass
                 conn = psycopg2.connect(host=DB["host"], port=DB["port"], dbname=DB["db"],
                                         user=DB["user"], password=DB["pwd"])
-
-            with conn.cursor() as c:
-                if run_id is not None:
-                    c.execute("INSERT INTO results(text_id, run_id, word_count, has_words, score) VALUES(%s,%s,%s,%s,%s)",
-                              (text_id, run_id, wc, hw, score))
-                    c.execute("INSERT INTO filtered_strings(text_id, run_id, filtered_content, removed_bad_term_ids) VALUES(%s,%s,%s,%s)",
-                              (text_id, run_id, filtered_content, removed_ids_str))
-                else:
-                    c.execute("INSERT INTO results(text_id, word_count, has_words, score) VALUES(%s,%s,%s,%s)",
-                              (text_id, wc, hw, score))
-                c.execute("UPDATE texts SET status='DONE' WHERE id=%s", (text_id,))
-            conn.commit()
-            
-            print(f"Processed text_id={text_id}, run_id={run_id}, score={score}")
+                # Retry the insert
+                with conn.cursor() as c:
+                    if run_id is not None:
+                        c.execute("INSERT INTO results(text_id, run_id, word_count, has_words, score) VALUES(%s,%s,%s,%s,%s)",
+                                  (text_id, run_id, wc, hw, score))
+                        c.execute("INSERT INTO filtered_strings(text_id, run_id, filtered_content, removed_bad_term_ids) VALUES(%s,%s,%s,%s)",
+                                  (text_id, run_id, filtered_content, removed_ids_str))
+                    else:
+                        c.execute("INSERT INTO results(text_id, word_count, has_words, score) VALUES(%s,%s,%s,%s)",
+                                  (text_id, wc, hw, score))
+                conn.commit()
 
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:

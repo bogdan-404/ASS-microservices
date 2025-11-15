@@ -102,10 +102,13 @@ public class RunController {
     int processed = 0;
     int maxWaitSeconds = 300; // 5 minute timeout
     int waitedSeconds = 0;
+    int pollCount = 0;
     while (processed < count && waitedSeconds < maxWaitSeconds) {
       try {
-        Thread.sleep(200);
-        waitedSeconds += 1; // Approximate, but close enough
+        // Adaptive polling: faster at start, slower as we approach completion
+        int sleepMs = (processed < count * 0.9) ? 50 : 200;
+        Thread.sleep(sleepMs);
+        waitedSeconds += (sleepMs / 1000) + 1;
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         break;
@@ -116,6 +119,7 @@ public class RunController {
         runId
       );
       processed = cnt != null ? cnt : 0;
+      pollCount++;
     }
     
     if (processed < count) {
