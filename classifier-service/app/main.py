@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
-import os, json, time, threading, psycopg2, pika
+import os, json, time, threading, psycopg2, pika, re
 from prometheus_client import Counter, Histogram, generate_latest
 
 app = FastAPI()
@@ -27,19 +27,33 @@ bad_terms = []
 
 def load_bad_terms(conn):
     with conn.cursor() as c:
-        c.execute("SELECT pattern FROM bad_terms WHERE enabled=true")
-        return [row[0].lower() for row in c.fetchall()]
+        c.execute("SELECT id, pattern FROM bad_terms WHERE enabled=true")
+        return [{"id": row[0], "pattern": row[1]} for row in c.fetchall()]
 
 def word_count(s: str) -> int:
-    import re
     return len([t for t in re.split(r"\W+", s) if t])
 
 def has_words(s: str) -> bool:
     low = s.lower()
-    for p in bad_terms:
-        if p in low:
+    for term in bad_terms:
+        if term["pattern"].lower() in low:
             return True
     return False
+
+def filter_and_collect_ids(content: str, terms: list) -> tuple:
+    out = content
+    low = content.lower()
+    removed_ids = []
+    for term in terms:
+        pat = term["pattern"]
+        pat_low = pat.lower()
+        if pat_low in low:
+            removed_ids.append(term["id"])
+            regex = r"(?i)(?<!\w)" + re.escape(pat) + r"(?!\w)"
+            out = re.sub(regex, " ", out)
+            low = out.lower()
+    out = re.sub(r"\s+", " ", out).strip()
+    return out, removed_ids
 
 def consumer():
     conn = psycopg2.connect(host=DB["host"], port=DB["port"], dbname=DB["db"],
@@ -57,22 +71,32 @@ def consumer():
         start = time.time()
         try:
             msg = json.loads(body)
+            run_id = msg.get("runId")
             text_id = msg["textId"]
             content = msg["content"]
             wc = word_count(content)
             hw = has_words(content)
             score = wc * (2 if hw else 1)
+            
+            filtered_content, removed_ids = filter_and_collect_ids(content, bad_terms)
+            removed_ids_str = "{" + ",".join(str(i) for i in removed_ids) + "}"
 
             with conn.cursor() as c:
-                c.execute("INSERT INTO results(text_id, word_count, has_words, score) VALUES(%s,%s,%s,%s)",
-                          (text_id, wc, hw, score))
+                if run_id is not None:
+                    c.execute("INSERT INTO results(text_id, run_id, word_count, has_words, score) VALUES(%s,%s,%s,%s,%s)",
+                              (text_id, run_id, wc, hw, score))
+                    c.execute("INSERT INTO filtered_strings(text_id, run_id, filtered_content, removed_bad_term_ids) VALUES(%s,%s,%s,%s)",
+                              (text_id, run_id, filtered_content, removed_ids_str))
+                else:
+                    c.execute("INSERT INTO results(text_id, word_count, has_words, score) VALUES(%s,%s,%s,%s)",
+                              (text_id, wc, hw, score))
                 c.execute("UPDATE texts SET status='DONE' WHERE id=%s", (text_id,))
             conn.commit()
 
             PROC_COUNT.inc()
             PROC_LAT.observe(time.time() - start)
             ch.basic_ack(delivery_tag=method.delivery_tag)
-        except Exception:
+        except Exception as e:
             conn.rollback()
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
