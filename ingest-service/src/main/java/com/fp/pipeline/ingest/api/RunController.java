@@ -100,15 +100,19 @@ public class RunController {
     
     // Block until all items are processed (with timeout)
     int processed = 0;
-    int maxWaitSeconds = 300; // 5 minute timeout
-    int waitedSeconds = 0;
+    long maxWaitMs = 300000; // 5 minute timeout (300 seconds)
+    long startWaitTime = System.currentTimeMillis();
     int pollCount = 0;
-    while (processed < count && waitedSeconds < maxWaitSeconds) {
+    while (processed < count) {
+      long elapsedMs = System.currentTimeMillis() - startWaitTime;
+      if (elapsedMs > maxWaitMs) {
+        break; // Timeout reached
+      }
+      
       try {
         // Adaptive polling: faster at start, slower as we approach completion
         int sleepMs = (processed < count * 0.9) ? 50 : 200;
         Thread.sleep(sleepMs);
-        waitedSeconds += (sleepMs / 1000) + 1;
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         break;
@@ -137,8 +141,16 @@ public class RunController {
     long durationMs = System.currentTimeMillis() - startTime;
     
     jdbc.update("UPDATE runs SET finished_at = NOW() WHERE id = ?", runId);
-    jdbc.execute("REFRESH MATERIALIZED VIEW results_stats");
-    Map<String, Object> stats = jdbc.queryForMap("SELECT * FROM results_stats");
+    
+    // Calculate stats for this specific run_id
+    Map<String, Object> stats = jdbc.queryForMap(
+      "SELECT " +
+      "  COUNT(*)::BIGINT AS total_processed, " +
+      "  AVG(score)::NUMERIC(10,2) AS avg_score, " +
+      "  AVG(CASE WHEN has_words THEN 1 ELSE 0 END)::NUMERIC(5,4) AS bad_words_rate " +
+      "FROM results WHERE run_id = ?",
+      runId
+    );
     
     Map<String, Object> result = new HashMap<>();
     result.put("runId", runId);
